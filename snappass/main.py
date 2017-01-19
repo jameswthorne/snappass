@@ -6,7 +6,7 @@ import uuid
 import redis
 from redis.exceptions import ConnectionError
 
-from flask import abort, Flask, render_template, request
+from flask import abort, Flask, jsonify, make_response, render_template, request
 
 
 SNEAKY_USER_AGENTS = ('Slackbot', 'facebookexternalhit', 'Twitterbot', 'Facebot', 'WhatsApp')
@@ -86,6 +86,14 @@ def clean_input():
 
     return time_conversion[time_period], request.form['password']
 
+def make_base_url():
+    if NO_SSL:
+        base_url = request.url_root
+    else:
+        base_url = request.url_root.replace("http://", "https://")
+
+    return base_url
+
 def request_is_valid(request):
     """
     Ensure the request validates the following:
@@ -93,10 +101,42 @@ def request_is_valid(request):
     """
     return not SNEAKY_USER_AGENTS_RE.search(request.headers.get('User-Agent', ''))
 
+def not_found_api():
+    message = {
+            'status': 404,
+            'message': 'Not Found: ' + request.url,
+    }
+
+    return make_response(jsonify(message), 404)
+
+def unsupported_media_type_api():
+    message = {
+            'status': 415,
+            'message': 'Unsupported Media Type',
+    }
+
+    return make_response(jsonify(message), 415)
+
+def bad_request_api():
+    message = {
+            'status': 400,
+            'message': 'Bad Request',
+    }
+
+    return make_response(jsonify(message), 400)
+
 
 @app.route('/', methods=['GET'])
 def index():
     return render_template('set_password.html')
+
+
+@app.route('/api', methods=['GET'])
+def index_api():
+    base_url = make_base_url()
+
+    return "Generate a password share link with the following command: \n\n" \
+           "curl -X POST -d \'{\"password\":\"password-here\",\"ttl\":\"week | day | hour\"}\' -H \"Content-Type:application/json\" " + base_url + "api\n"
 
 
 @app.route('/', methods=['POST'])
@@ -104,12 +144,50 @@ def handle_password():
     ttl, password = clean_input()
     key = set_password(password, ttl)
 
-    if NO_SSL:
-        base_url = request.url_root
-    else:
-        base_url = request.url_root.replace("http://", "https://")
+    base_url = make_base_url()
+
     link = base_url + key
     return render_template('confirm.html', password_link=link)
+
+
+@app.route('/api', methods=['POST'])
+def handle_password_api():
+    if not request.headers['Content-Type'] == 'application/json':
+        return unsupported_media_type_api()
+
+    payload = request.get_json()
+
+    if 'password' in payload:
+        password = payload['password']
+
+        if not len(password) > 0:
+            return bad_request_api()
+    else:
+        return bad_request_api()
+
+    if 'ttl' in payload:
+        time_period = payload['ttl'].lower()
+        if not time_period in time_conversion:
+            return bad_request_api()
+
+        ttl = time_conversion[time_period]
+    else:
+        # Set ttl to one week if not specified in the JSON
+        ttl = 604800
+
+    key = set_password(password, ttl)
+
+    base_url = make_base_url()
+
+    link_web = base_url + key
+    link_api = base_url + "api/" + key
+
+    data = {
+        'web' : link_web,
+        'api' : link_api,
+    }
+
+    return jsonify(data)
 
 
 @app.route('/<password_key>', methods=['GET'])
@@ -121,6 +199,21 @@ def show_password(password_key):
         abort(404)
 
     return render_template('password.html', password=password)
+
+
+@app.route('/api/<password_key>', methods=['GET'])
+def get_password_api(password_key):
+    password = get_password(password_key)
+    if not password:
+        return not_found_api()
+
+    base_url = make_base_url()
+
+    data = {
+        'password' : password
+    }
+
+    return jsonify(data)
 
 
 @check_redis_alive
