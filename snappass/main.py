@@ -3,8 +3,10 @@ import re
 import sys
 import uuid
 
-import redis
-from redis.exceptions import ConnectionError
+#import redis
+#from redis.exceptions import ConnectionError
+
+from google.appengine.api import memcache
 
 from flask import abort, Flask, jsonify, make_response, render_template, request
 
@@ -19,14 +21,14 @@ app.secret_key = os.environ.get('SECRET_KEY', 'Secret Key')
 app.config.update(
     dict(STATIC_URL=os.environ.get('STATIC_URL', 'static')))
 
-if os.environ.get('REDIS_URL'):
-    redis_client = redis.StrictRedis.from_url(os.environ.get('REDIS_URL'))
-else:
-    redis_host = os.environ.get('REDIS_HOST', 'localhost')
-    redis_port = os.environ.get('REDIS_PORT', 6379)
-    redis_db = os.environ.get('SNAPPASS_REDIS_DB', 0)
-    redis_client = redis.StrictRedis(
-        host=redis_host, port=redis_port, db=redis_db)
+#if os.environ.get('REDIS_URL'):
+#    redis_client = redis.StrictRedis.from_url(os.environ.get('REDIS_URL'))
+#else:
+#    redis_host = os.environ.get('REDIS_HOST', 'localhost')
+#    redis_port = os.environ.get('REDIS_PORT', 6379)
+#    redis_db = os.environ.get('SNAPPASS_REDIS_DB', 0)
+#    redis_client = redis.StrictRedis(
+#        host=redis_host, port=redis_port, db=redis_db)
 
 time_conversion = {
     'week': 604800,
@@ -35,34 +37,37 @@ time_conversion = {
 }
 
 
-def check_redis_alive(fn):
-    def inner(*args, **kwargs):
-        try:
-            if fn.__name__ == 'main':
-                redis_client.ping()
-            return fn(*args, **kwargs)
-        except ConnectionError as e:
-            print('Failed to connect to redis! %s' % e.message)
-            if fn.__name__ == 'main':
-                sys.exit(0)
-            else:
-                return abort(500)
-    return inner
+#def check_redis_alive(fn):
+#    def inner(*args, **kwargs):
+#        try:
+#            if fn.__name__ == 'main':
+#                redis_client.ping()
+#            return fn(*args, **kwargs)
+#        except ConnectionError as e:
+#            print('Failed to connect to redis! %s' % e.message)
+#            if fn.__name__ == 'main':
+#                sys.exit(0)
+#            else:
+#                return abort(500)
+#    return inner
 
 
-@check_redis_alive
+#@check_redis_alive
 def set_password(password, ttl):
     key = uuid.uuid4().hex
-    redis_client.setex(key, ttl, password)
+    #redis_client.setex(key, ttl, password)
+    memcache.add(key=key, value=password, time=ttl)
     return key
 
 
-@check_redis_alive
+#@check_redis_alive
 def get_password(key):
-    password = redis_client.get(key)
+    #password = redis_client.get(key)
+    password = memcache.get(key)
     if password is not None:
         password = password.decode('utf-8')
-    redis_client.delete(key)
+    #redis_client.delete(key)
+    memcache.delete(key)
     return password
 
 def empty(value):
@@ -216,7 +221,7 @@ def get_password_api(password_key):
     return jsonify(data)
 
 
-@check_redis_alive
+#@check_redis_alive
 def main():
     app.run(host='0.0.0.0')
 
